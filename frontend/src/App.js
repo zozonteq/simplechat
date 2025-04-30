@@ -5,7 +5,7 @@ import { Authenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
 import axios from 'axios';
 import './App.css';
-import { parseMarkdown } from './markdown';
+import { parseMarkdown, MarkdownRenderer } from './markdown';
 
 // 設定を読み込む関数
 const loadConfig = () => {
@@ -126,7 +126,7 @@ function ChatInterface({ signOut, user }) {
             messages.map((msg, index) => (
               <div key={index} className={`message ${msg.role}`}>
                 <div className="message-content">
-                  {parseMarkdown(msg.content)}
+                  <MarkdownRenderer content={msg.content} />
                 </div>
               </div>
             ))
