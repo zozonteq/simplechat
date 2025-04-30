@@ -92,8 +92,6 @@ LLM_CLIENT = LLMClient(API_ENDPOINT)
 def lambda_handler(event, context):
     try:
         assistant_response = LLM_CLIENT.generate(event["body"]["message"])
-
-        # コンテキストから実行リージョンを取得し、クライアントを初期化
         
         # 成功レスポンスの返却
         return {
