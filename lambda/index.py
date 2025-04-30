@@ -1,6 +1,8 @@
 # lambda/index.py
 import json
+import urllib.request
 import os
+from urllib.error import HTTPError, URLError
 import boto3
 import re  # 正規表現モジュールをインポート
 from botocore.exceptions import ClientError
@@ -8,9 +10,11 @@ from botocore.exceptions import ClientError
 # python_client.py
 # このコードは、ngrokで公開されたAPIにアクセスするPythonクライアントの例です
 
-import requests
 import json
 import time
+
+# APIエンドポイントの設定
+API_ENDPOINT = os.environ.get("API_ENDPOINT", "https://4bf1-34-125-222-117.ngrok-free.app/generate")
 
 class LLMClient:
     """LLM API クライアントクラス"""
@@ -20,20 +24,9 @@ class LLMClient:
         初期化
         
         Args:
-            api_url (str): API のベース URL（ngrok URL）
+            api_url (str): API のベース URL
         """
-        self.api_url = api_url.rstrip('/')
-        self.session = requests.Session()
-    
-    def health_check(self):
-        """
-        ヘルスチェック
-        
-        Returns:
-            dict: ヘルスチェック結果
-        """
-        response = self.session.get(f"{self.api_url}/health")
-        return response.json()
+        self.api_url = api_url
     
     def generate(self, prompt, max_new_tokens=512, temperature=0.7, top_p=0.9, do_sample=True):
         """
@@ -57,41 +50,46 @@ class LLMClient:
             "do_sample": do_sample
         }
         
-        start_time = time.time()
-        response = self.session.post(
-            f"{self.api_url}/generate",
-            json=payload
-        )
-        total_time = time.time() - start_time
+        data = json.dumps(payload).encode("utf-8")
         
-        if response.status_code == 200:
-            result = response.json()
-            result["total_request_time"] = total_time
-            return result
-        else:
-            raise Exception(f"API error: {response.status_code} - {response.text}")
+        try:
+            req = urllib.request.Request(
+                self.api_url,
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            
+            with urllib.request.urlopen(req) as res:
+                response_json = json.loads(res.read().decode("utf-8"))
+                return response_json
+                
+        except HTTPError as e:
+            error_message = f"HTTP Error: {e.code} - {e.reason}"
+            if e.readable():
+                error_message += f"\nResponse: {e.read().decode('utf-8')}"
+            raise Exception(error_message)
+        except URLError as e:
+            raise Exception(f"URL Error: {str(e)}")
+        except json.JSONDecodeError as e:
+            raise Exception(f"JSON Decode Error: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Unexpected error: {str(e)}")
 
-
-# Lambda コンテキストからリージョンを抽出する関数
-def extract_region_from_arn(arn):
-    # ARN 形式: arn:aws:lambda:region:account-id:function:function-name
-    match = re.search('arn:aws:lambda:([^:]+):', arn)
-    if match:
-        return match.group(1)
-    return "us-east-1"  # デフォルト値
-
-# グローバル変数としてクライアントを初期化（初期値）
-bedrock_client = None
-
-API_ENDPOINT = "https://87ae-34-125-46-174.ngrok-free.app/"
-
-# モデルID
-MODEL_ID = os.environ.get("MODEL_ID", "us.amazon.nova-lite-v1:0")
-LLM_CLIENT = LLMClient(API_ENDPOINT)
+# グローバルクライアントインスタンス
+llm_client = LLMClient(API_ENDPOINT)
 
 def lambda_handler(event, context):
     try:
-        assistant_response = LLM_CLIENT.generate(event["body"]["message"])
+        # リクエストボディの解析
+        body = json.loads(event.get("body", "{}"))
+        message = body.get("message", "")
+        
+        if not message:
+            raise ValueError("Message is required")
+        
+        # LLMクライアントを使用してテキスト生成
+        response = llm_client.generate(message)
         
         # 成功レスポンスの返却
         return {
@@ -104,14 +102,27 @@ def lambda_handler(event, context):
             },
             "body": json.dumps({
                 "success": True,
-                "response": assistant_response,
+                "response": response.get("generated_text", ""),
                 "conversationHistory": []
             })
         }
         
-    except Exception as error:
-        print("Error:", str(error))
-        
+    except ValueError as e:
+        return {
+            "statusCode": 400,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                "Access-Control-Allow-Methods": "OPTIONS,POST"
+            },
+            "body": json.dumps({
+                "success": False,
+                "error": str(e)
+            })
+        }
+    except Exception as e:
+        print(f"Error: {str(e)}")
         return {
             "statusCode": 500,
             "headers": {
@@ -122,6 +133,20 @@ def lambda_handler(event, context):
             },
             "body": json.dumps({
                 "success": False,
-                "error": str(error)
+                "error": str(e)
             })
         }
+
+# Lambda コンテキストからリージョンを抽出する関数
+def extract_region_from_arn(arn):
+    # ARN 形式: arn:aws:lambda:region:account-id:function:function-name
+    match = re.search('arn:aws:lambda:([^:]+):', arn)
+    if match:
+        return match.group(1)
+    return "us-east-1"  # デフォルト値
+
+# グローバル変数としてクライアントを初期化（初期値）
+bedrock_client = None
+
+# モデルID
+MODEL_ID = os.environ.get("MODEL_ID", "us.amazon.nova-lite-v1:0")
