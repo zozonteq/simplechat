@@ -125,9 +125,7 @@ function ChatInterface({ signOut, user }) {
             messages.map((msg, index) => (
               <div key={index} className={`message ${msg.role}`}>
                 <div className="message-content">
-                  {msg.content.split('\n').map((line, i) => (
-                    <p key={i}>{line}</p>
-                  ))}
+                  {parseMarkdown(msg.content)}
                 </div>
               </div>
             ))
